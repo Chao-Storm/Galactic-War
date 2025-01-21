@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>6-Planet Mini Galactic War</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+    #mapContainer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100vh;
+      position: relative;
+    }
+    #controls {
+      margin: 10px 0;
+      text-align: center;
+      z-index: 2; /* above the canvas */
+    }
+    #galaxyMap {
+      background-color: #111;
+      border: 2px solid #555;
+    }
+    #tooltip {
+      position: absolute;
+      background-color: rgba(0,0,0,0.8);
+      padding: 8px;
+      border: 1px solid #888;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease-in-out;
+      color: #fff;
+      font-size: 0.9rem;
+      z-index: 10;
+    }
+    #tooltip.show {
+      opacity: 1;
+    }
+    /* Legend for player RP */
+    #legend {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background-color: rgba(0, 0, 0, 0.4);
+      padding: 10px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      z-index: 3;
+      min-width: 170px;
+      font-size: 0.9rem;
+    }
+    #legend h4 {
+      margin: 0 0 5px 0;
+      font-size: 1rem;
+      text-align: center;
+      color: #ffcc00;
+    }
+    button {
+      margin: 5px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    /* A small color swatch to show in the legend */
+    .color-swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 6px;
+      border-radius: 2px;
+      vertical-align: middle;
+    }
+    /* Make legend rows clickable to reselect players */
+    .legend-row {
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+
+<body>
+<div id="mapContainer">
+  <div id="controls">
+    <label for="playerName">Current Player:</label>
+    <input type="text" id="playerName" value="Player 1" />
+
+    <!-- Color Picker -->
+    <label for="colorPicker">Color:</label>
+    <input type="color" id="colorPicker" value="#ff4444" />
+
+    <button id="endDayBtn">End Day (Collect RP)</button>
+    <p style="font-size:0.85rem; color:#ccc; margin:5px 0 0 0;">
+      - 2 Landing Zones (3 RP, upkeep 2 => net=1, cost=3 to capture)<br/>
+      - Other planets (4 RP, upkeep 2 => net=2, cost=2 to capture)<br/>
+      - Forced LZ capture if zero planets owned<br/>
+      - No immediate RP; collect at "End Day"<br/>
+      - Pick a color for your name, and **click** a name in the legend to reselect them
+    </p>
+  </div>
+
+  <canvas id="galaxyMap" width="800" height="500"></canvas>
+  <div id="tooltip"></div>
+
+  <div id="legend">
+    <h4>Player RP Banks</h4>
+    <div>(No players yet)</div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------
+// 1) CONFIG & GLOBALS
+// ---------------------------------------------------------------------
+const canvasEl = document.getElementById("galaxyMap");
+const ctx = canvasEl.getContext("2d");
+const tooltip = document.getElementById("tooltip");
+const legend = document.getElementById("legend");
+const playerNameInput = document.getElementById("playerName");
+const colorPicker = document.getElementById("colorPicker");
+const endDayBtn = document.getElementById("endDayBtn");
+
+// Each new player starts with 5 RP
+const startingRP = 5; 
+let playerRP = {};       // store each player's RP total
+let playerColors = {};   // store each player's color
+
+// ---------------------------------------------------------------------
+// 2) DRAW / HELPER FUNCTIONS
+// ---------------------------------------------------------------------
+
+function getPlayerColor(playerName) {
+  return playerColors[playerName] || "#ffffff";
+}
+
+function drawBackgroundStars(numStars) {
+  for (let i = 0; i < numStars; i++) {
+    const starX = Math.random() * canvasEl.width;
+    const starY = Math.random() * canvasEl.height;
+    const starSize = Math.random() * 1.5;
+    const starOpacity = 0.2 + Math.random() * 0.8;
+    ctx.fillStyle = `rgba(255,255,255,${starOpacity})`;
+    ctx.fillRect(starX, starY, starSize, starSize);
+  }
+}
+
+function drawConnections() {
+  ctx.strokeStyle = "rgba(255, 255, 0, 0.3)";
+  ctx.lineWidth = 1;
+  for (const planet of planets) {
+    for (const neighbor of planet.adjacency) {
+      if (planet.name < neighbor) {
+        const q = planets.find(x => x.name === neighbor);
+        if (q) {
+          ctx.beginPath();
+          ctx.moveTo(planet.x, planet.y);
+          ctx.lineTo(q.x, q.y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Draw each planet as a circle. If it's an LZ, also draw a ring around it
+ * in the color of the owner if captured, else a neutral color.
+ */
+function drawPlanets() {
+  for (const planet of planets) {
+    // 1) Fill the planet circle
+    ctx.beginPath();
+    if (planet.owner) {
+      ctx.fillStyle = getPlayerColor(planet.owner);
+    } else {
+      if (planet.isLandingZone) {
+        ctx.fillStyle = "#00ff00"; // bright green for unowned LZ
+      } else {
+        ctx.fillStyle = "#ffcc00"; // yellow for unowned
+      }
+    }
+    ctx.arc(planet.x, planet.y, 6, 0, Math.PI * 2, false);
+    ctx.fill();
+
+    // 2) If it's an LZ, draw a ring around it
+    if (planet.isLandingZone) {
+      ctx.beginPath();
+      // if captured, ring in owner's color; else neutral #999
+      ctx.strokeStyle = planet.owner ? getPlayerColor(planet.owner) : "#999999";
+      ctx.lineWidth = 1.5;
+      ctx.arc(planet.x, planet.y, 8, 0, Math.PI * 2, false);
+      ctx.stroke();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+// 3) GAME LOGIC
+// ---------------------------------------------------------------------
+
+function getCaptureCost(planet) {
+  // LZ => cost 3, other => cost 2
+  return planet.isLandingZone ? 3 : 2;
+}
+
+function getPlanetNet(p) {
+  // net = rp - upkeep
+  return p.rp - p.upkeep;
+}
+
+function playerOwnsNoPlanets(playerName) {
+  return !planets.some(p => p.owner === playerName);
+}
+
+function canClaimOrAttack(planet, playerName) {
+  // If a new player (owns no planets) and planet is LZ => forced
+  if (playerOwnsNoPlanets(playerName) && planet.isLandingZone) {
+    return true;
+  }
+  // If unowned LZ => also always allowed
+  if (planet.isLandingZone && !planet.owner) {
+    return true;
+  }
+  // Otherwise, must own an adjacent planet
+  for (const neighbor of planet.adjacency) {
+    const neighborObj = planets.find(x => x.name === neighbor);
+    if (neighborObj && neighborObj.owner === playerName) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ensurePlayer(playerName) {
+  if (!playerRP[playerName]) {
+    playerRP[playerName] = startingRP;
+  }
+  const chosenColor = colorPicker.value;
+  playerColors[playerName] = chosenColor;
+}
+
+/**
+ * Attempt to capture or attack a planet
+ */
+function attemptCapture(planet, playerName) {
+  const cost = getCaptureCost(planet);
+  const currentRP = playerRP[playerName];
+  if (currentRP < cost) {
+    alert(`You need at least ${cost} RP to capture this planet!`);
+    return;
+  }
+
+  if (!planet.owner) {
+    // unoccupied => claim
+    planet.owner = playerName;
+    playerRP[playerName] -= cost;
+    alert(`${playerName} claimed ${planet.name} (Cost ${cost} RP).`);
+  } else {
+    // planet is owned by someone else
+    if (planet.owner === playerName) {
+      alert(`You already own ${planet.name}!`);
+    } else {
+      const oldOwner = planet.owner;
+      if (confirm(`${planet.name} is owned by ${oldOwner}.\nCapture cost: ${cost} RP.\nProceed?`)) {
+        if (playerRP[playerName] < cost) {
+          alert(`You no longer have enough RP!`);
+          return;
+        }
+        planet.owner = playerName;
+        playerRP[playerName] -= cost;
+        alert(`${playerName} took ${planet.name} from ${oldOwner}! (Cost ${cost} RP)`);
+      }
+    }
+  }
+}
+
+function endDay() {
+  const dayGains = {};
+  for (const p of planets) {
+    if (p.owner) {
+      const netVal = getPlanetNet(p);
+      if (!dayGains[p.owner]) {
+        dayGains[p.owner] = 0;
+      }
+      dayGains[p.owner] += netVal;
+    }
+  }
+  for (const plyr in dayGains) {
+    playerRP[plyr] += dayGains[plyr];
+  }
+  alert("Day ends. Players collect net from owned planets!");
+  updateLegend();
+}
+
+// ---------------------------------------------------------------------
+// 4) SMALL 6-PLANET ARRAY
+// ---------------------------------------------------------------------
+
+/**
+ * We have 6 planets total:
+ *  - 2 Landing Zones: LZ-1, LZ-2, each rp=3, upkeep=2 => net=1
+ *  - 4 normal planets (A,B,C,D), each rp=4, upkeep=2 => net=2
+ *
+ * Adjacency:
+ *   LZ-1 -> A -> B -> LZ-2
+ *   A -> C -> B
+ *   C -> D
+ */
+const planets = [
+  {
+    name: "LZ-1", x: 200, y: 150,
+    isLandingZone: true,
+    ring: "outer",
+    rp: 3, upkeep: 2,
+    owner: null,
+    adjacency: ["A"]
+  },
+  {
+    name: "LZ-2", x: 600, y: 260,
+    isLandingZone: true,
+    ring: "outer",
+    rp: 3, upkeep: 2,
+    owner: null,
+    adjacency: ["B"]
+  },
+  {
+    name: "A", x: 300, y: 220,
+    isLandingZone: false,
+    ring: "middle",
+    rp: 4, upkeep: 2, // net=2
+    owner: null,
+    adjacency: ["LZ-1","C","D"]
+  },
+  {
+    name: "B", x: 500, y: 220,
+    isLandingZone: false,
+    ring: "middle",
+    rp: 4, upkeep: 2,
+    owner: null,
+    adjacency: ["LZ-2","C","D"]
+  },
+  {
+    name: "C", x: 400, y: 320,
+    isLandingZone: false,
+    ring: "inner",
+    rp: 4, upkeep: 2,
+    owner: null,
+    adjacency: ["A","B"]
+  },
+  {
+    name: "D", x: 400, y: 125,
+    isLandingZone: false,
+    ring: "inner",
+    rp: 4, upkeep: 2,
+    owner: null,
+    adjacency: ["A","B"]
+  }
+];
+
+// ---------------------------------------------------------------------
+// 5) RENDER + LEGEND + EVENT LISTENERS
+// ---------------------------------------------------------------------
+
+function renderAll() {
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  drawBackgroundStars(30);
+  drawConnections();
+  drawPlanets();
+}
+
+// Show each player's current RP + color in the legend
+function updateLegend() {
+  let html = "<h4>Player RP Banks</h4>";
+  const players = Object.keys(playerRP);
+
+  if (players.length === 0) {
+    html += "<div>(No players yet)</div>";
+  } else {
+    for (const p of players) {
+      const rpVal = playerRP[p];
+      const color = getPlayerColor(p);
+      html += `
+        <div class="legend-row" data-player="${p}">
+          <span class="color-swatch" style="background:${color}"></span>
+          ${p}: ${rpVal}
+        </div>
+      `;
+    }
+  }
+  legend.innerHTML = html;
+
+  // Add click events => re-select a player
+  const rows = document.querySelectorAll(".legend-row");
+  rows.forEach(row => {
+    row.addEventListener("click", () => {
+      const pName = row.getAttribute("data-player");
+      playerNameInput.value = pName;
+      colorPicker.value = getPlayerColor(pName);
+      alert(`You have re-selected: ${pName}`);
+    });
+  });
+}
+
+// Mousemove => tooltip
+canvasEl.addEventListener("mousemove", (e) => {
+  const rect = canvasEl.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const hovered = planets.find(p => {
+    const dx = mx - p.x;
+    const dy = my - p.y;
+    return dx*dx + dy*dy <= 64; 
+  });
+
+  if (hovered) {
+    const netVal = getPlanetNet(hovered);
+    const ownership = hovered.owner ? `Owned by: ${hovered.owner}` : "Unoccupied";
+    tooltip.innerHTML = `
+      <strong>${hovered.name}</strong><br/>
+      Ring: ${hovered.ring}<br/>
+      RP: ${hovered.rp}, Upkeep: ${hovered.upkeep}, Net: ${netVal}<br/>
+      ${ownership}<br/>
+      <em>Adjacents: ${hovered.adjacency.join(", ")}</em>
+    `;
+    tooltip.style.left = e.pageX + 15 + "px";
+    tooltip.style.top = e.pageY + 15 + "px";
+    tooltip.classList.add("show");
+    canvasEl.style.cursor = "pointer";
+  } else {
+    tooltip.classList.remove("show");
+    canvasEl.style.cursor = "default";
+  }
+});
+
+// Click => attempt capture
+canvasEl.addEventListener("click", (e) => {
+  const playerName = playerNameInput.value.trim() || "Player";
+  ensurePlayer(playerName);
+
+  const rect = canvasEl.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  const clicked = planets.find(p => {
+    const dx = mx - p.x;
+    const dy = my - p.y;
+    return dx*dx + dy*dy <= 64;
+  });
+
+  if (!clicked) return;
+
+  if (!canClaimOrAttack(clicked, playerName)) {
+    alert("No adjacency (or not a free LZ). Can't capture!");
+    return;
+  }
+
+  attemptCapture(clicked, playerName);
+  renderAll();
+  updateLegend();
+});
+
+endDayBtn.addEventListener("click", () => {
+  endDay();
+  renderAll();
+  updateLegend();
+});
+
+// Initial load
+renderAll();
+updateLegend();
+</script>
+</body>
+</html>
