@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>6-Planet Mini Galactic War</title>
+  <title>6-Planet Mini Galactic War (Two Sides Pre-Split)</title>
   <style>
     body {
       margin: 0;
@@ -42,6 +42,7 @@
     #tooltip.show {
       opacity: 1;
     }
+
     /* Legend for player RP */
     #legend {
       position: absolute;
@@ -87,19 +88,19 @@
 <div id="mapContainer">
   <div id="controls">
     <label for="playerName">Current Player:</label>
-    <input type="text" id="playerName" value="Player 1" />
+    <input type="text" id="playerName" value="Team1" />
 
     <!-- Color Picker -->
     <label for="colorPicker">Color:</label>
-    <input type="color" id="colorPicker" value="#ff4444" />
+    <input type="color" id="colorPicker" value="#4488ff" />
 
     <button id="endDayBtn">End Day (Collect RP)</button>
     <p style="font-size:0.85rem; color:#ccc; margin:5px 0 0 0;">
-      - 2 Landing Zones (3 RP, upkeep 2 => net=1, cost=3 to capture)<br/>
-      - Other planets (4 RP, upkeep 2 => net=2, cost=2 to capture)<br/>
-      - Forced LZ capture if zero planets owned<br/>
-      - No immediate RP; collect at "End Day"<br/>
-      - Pick a color for your name, and **click** a name in the legend to reselect them
+      - Two sides: Team1 & Team2, each already owns 3 planets<br/>
+      - LZ's cost 3 RP, normal cost 2 to capture<br/>
+      - Net: LZ=1, Others=2<br/>
+      - Start with 5 RP each side (you can change this below)<br/>
+      - Feel free to rename sides or pick different colors
     </p>
   </div>
 
@@ -124,15 +125,25 @@ const playerNameInput = document.getElementById("playerName");
 const colorPicker = document.getElementById("colorPicker");
 const endDayBtn = document.getElementById("endDayBtn");
 
-// Each new player starts with 5 RP
+// Pre-set each side's RP
+let playerRP = {
+  "Team1": 5,
+  "Team2": 5
+};
+
+// Pre-set each side's color
+let playerColors = {
+  "Team1": "#4488ff", // you can pick another color
+  "Team2": "#ff4444"
+};
+
+// If a new name is typed, we fallback to 5 RP and white color, but
+// we basically want the 2 sides. So if you do add more players, you can.
 const startingRP = 5; 
-let playerRP = {};       // store each player's RP total
-let playerColors = {};   // store each player's color
 
 // ---------------------------------------------------------------------
 // 2) DRAW / HELPER FUNCTIONS
 // ---------------------------------------------------------------------
-
 function getPlayerColor(playerName) {
   return playerColors[playerName] || "#ffffff";
 }
@@ -167,29 +178,28 @@ function drawConnections() {
 }
 
 /**
- * Draw each planet as a circle. If it's an LZ, also draw a ring around it
- * in the color of the owner if captured, else a neutral color.
+ * Draw each planet as a circle. 
+ * If it's an LZ => ring around it (in owner color or gray if unowned)
  */
 function drawPlanets() {
   for (const planet of planets) {
-    // 1) Fill the planet circle
+    // Fill the planet
     ctx.beginPath();
     if (planet.owner) {
       ctx.fillStyle = getPlayerColor(planet.owner);
     } else {
       if (planet.isLandingZone) {
-        ctx.fillStyle = "#00ff00"; // bright green for unowned LZ
+        ctx.fillStyle = "#00ff00"; // unowned LZ
       } else {
-        ctx.fillStyle = "#ffcc00"; // yellow for unowned
+        ctx.fillStyle = "#ffcc00"; // unowned normal planet
       }
     }
     ctx.arc(planet.x, planet.y, 6, 0, Math.PI * 2, false);
     ctx.fill();
 
-    // 2) If it's an LZ, draw a ring around it
+    // If LZ => ring
     if (planet.isLandingZone) {
       ctx.beginPath();
-      // if captured, ring in owner's color; else neutral #999
       ctx.strokeStyle = planet.owner ? getPlayerColor(planet.owner) : "#999999";
       ctx.lineWidth = 1.5;
       ctx.arc(planet.x, planet.y, 8, 0, Math.PI * 2, false);
@@ -201,14 +211,11 @@ function drawPlanets() {
 // ---------------------------------------------------------------------
 // 3) GAME LOGIC
 // ---------------------------------------------------------------------
-
 function getCaptureCost(planet) {
-  // LZ => cost 3, other => cost 2
   return planet.isLandingZone ? 3 : 2;
 }
 
 function getPlanetNet(p) {
-  // net = rp - upkeep
   return p.rp - p.upkeep;
 }
 
@@ -217,18 +224,18 @@ function playerOwnsNoPlanets(playerName) {
 }
 
 function canClaimOrAttack(planet, playerName) {
-  // If a new player (owns no planets) and planet is LZ => forced
+  // If a new name typed not in the 2 sides, and no planets => forced LZ
   if (playerOwnsNoPlanets(playerName) && planet.isLandingZone) {
     return true;
   }
-  // If unowned LZ => also always allowed
+  // If unoccupied LZ => also allowed
   if (planet.isLandingZone && !planet.owner) {
     return true;
   }
-  // Otherwise, must own an adjacent planet
+  // Otherwise must own adjacency
   for (const neighbor of planet.adjacency) {
-    const neighborObj = planets.find(x => x.name === neighbor);
-    if (neighborObj && neighborObj.owner === playerName) {
+    const nObj = planets.find(x => x.name === neighbor);
+    if (nObj && nObj.owner === playerName) {
       return true;
     }
   }
@@ -236,11 +243,15 @@ function canClaimOrAttack(planet, playerName) {
 }
 
 function ensurePlayer(playerName) {
+  // If the name is "Team1" or "Team2", we have them pre-defined above
+  // but if something else is typed, let's fallback:
   if (!playerRP[playerName]) {
     playerRP[playerName] = startingRP;
   }
-  const chosenColor = colorPicker.value;
-  playerColors[playerName] = chosenColor;
+  if (!playerColors[playerName]) {
+    // fallback to colorPicker or white
+    playerColors[playerName] = colorPicker.value || "#ffffff";
+  }
 }
 
 /**
@@ -255,12 +266,11 @@ function attemptCapture(planet, playerName) {
   }
 
   if (!planet.owner) {
-    // unoccupied => claim
     planet.owner = playerName;
     playerRP[playerName] -= cost;
     alert(`${playerName} claimed ${planet.name} (Cost ${cost} RP).`);
   } else {
-    // planet is owned by someone else
+    // Attack scenario
     if (planet.owner === playerName) {
       alert(`You already own ${planet.name}!`);
     } else {
@@ -297,74 +307,83 @@ function endDay() {
 }
 
 // ---------------------------------------------------------------------
-// 4) SMALL 6-PLANET ARRAY
+// 4) THE 6 PLANETS, PRE-OWNED BY TWO SIDES
 // ---------------------------------------------------------------------
-
 /**
- * We have 6 planets total:
- *  - 2 Landing Zones: LZ-1, LZ-2, each rp=3, upkeep=2 => net=1
- *  - 4 normal planets (A,B,C,D), each rp=4, upkeep=2 => net=2
+ * Let's do a simple adjacency:
+ * LZ-1 -> Planet A, Planet D
+ * LZ-2 -> Planet B, Planet C
+ * etc.
  *
- * Adjacency:
- *   LZ-1 -> A -> B -> LZ-2
- *   A -> C -> B
- *   C -> D
+ * We'll keep net logic the same:
+ * LZ => rp=3, upkeep=2 => net=1
+ * Normal => rp=4, upkeep=2 => net=2
+ *
+ * We'll say Team1 owns LZ-1, Planet A, Planet D
+ * We'll say Team2 owns LZ-2, Planet B, Planet C
  */
 const planets = [
   {
-    name: "LZ-1", x: 200, y: 150,
+    name: "LZ-1", 
+    x: 150, y: 120,
+    isLandingZone: true,
+    ring: "outer",
+    rp: 3, upkeep: 2, // net=1
+    // Owned by Team1 from the start
+    owner: "Team1",
+    adjacency: ["A","D"]
+  },
+  {
+    name: "LZ-2", 
+    x: 650, y: 120,
     isLandingZone: true,
     ring: "outer",
     rp: 3, upkeep: 2,
-    owner: null,
-    adjacency: ["A"]
+    // Owned by Team2
+    owner: "Team2",
+    adjacency: ["B","C"]
   },
   {
-    name: "LZ-2", x: 600, y: 260,
-    isLandingZone: true,
-    ring: "outer",
-    rp: 3, upkeep: 2,
-    owner: null,
-    adjacency: ["B"]
-  },
-  {
-    name: "A", x: 300, y: 220,
+    name: "A", 
+    x: 300, y: 220,
     isLandingZone: false,
     ring: "middle",
     rp: 4, upkeep: 2, // net=2
-    owner: null,
-    adjacency: ["LZ-1","C","D"]
+    owner: "Team1",  // belongs to Team1
+    adjacency: ["LZ-1","B","D"]
   },
   {
-    name: "B", x: 500, y: 220,
+    name: "B", 
+    x: 500, y: 220,
     isLandingZone: false,
     ring: "middle",
     rp: 4, upkeep: 2,
-    owner: null,
-    adjacency: ["LZ-2","C","D"]
+    owner: "Team2",
+    adjacency: ["LZ-2","A","C"]
   },
   {
-    name: "C", x: 400, y: 320,
+    name: "C", 
+    x: 450, y: 320,
     isLandingZone: false,
     ring: "inner",
     rp: 4, upkeep: 2,
-    owner: null,
-    adjacency: ["A","B"]
+    owner: "Team2",
+    adjacency: ["LZ-2","B","D"]
   },
   {
-    name: "D", x: 400, y: 125,
+    name: "D", 
+    x: 350, y: 320,
     isLandingZone: false,
     ring: "inner",
     rp: 4, upkeep: 2,
-    owner: null,
-    adjacency: ["A","B"]
+    owner: "Team1",
+    adjacency: ["LZ-1","C","A"]
   }
 ];
 
 // ---------------------------------------------------------------------
 // 5) RENDER + LEGEND + EVENT LISTENERS
 // ---------------------------------------------------------------------
-
 function renderAll() {
   ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
   drawBackgroundStars(30);
@@ -372,7 +391,6 @@ function renderAll() {
   drawPlanets();
 }
 
-// Show each player's current RP + color in the legend
 function updateLegend() {
   let html = "<h4>Player RP Banks</h4>";
   const players = Object.keys(playerRP);
@@ -405,7 +423,7 @@ function updateLegend() {
   });
 }
 
-// Mousemove => tooltip
+// On mouse move => tooltip
 canvasEl.addEventListener("mousemove", (e) => {
   const rect = canvasEl.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -437,9 +455,9 @@ canvasEl.addEventListener("mousemove", (e) => {
   }
 });
 
-// Click => attempt capture
+// On click => attempt capture
 canvasEl.addEventListener("click", (e) => {
-  const playerName = playerNameInput.value.trim() || "Player";
+  const playerName = playerNameInput.value.trim() || "Team1";
   ensurePlayer(playerName);
 
   const rect = canvasEl.getBoundingClientRect();
@@ -464,6 +482,7 @@ canvasEl.addEventListener("click", (e) => {
   updateLegend();
 });
 
+// End Day => daily net
 endDayBtn.addEventListener("click", () => {
   endDay();
   renderAll();
